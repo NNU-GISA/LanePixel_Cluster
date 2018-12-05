@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
         cv::Mat image;
         leftCap >> image;
 
-        if (ni < 500)
+        if (ni < 9220)
             continue;
 
         // Step0.1: Read in pixels judged as lane
@@ -75,16 +75,28 @@ int main(int argc, char *argv[])
             }
         }
 
+        uchar* ptr = image.data;
+        int step0 = image.step[0];
+        int step1 = image.step[1];
+        int channels = image.channels();
+        assert(channels == 3);
+        int elemSize1 = image.elemSize1();
         for (auto iter = mLanes.begin(); iter != mLanes.end(); iter++)
         {
             std::vector<Eigen::Vector2i> pts = iter->second;
             for (const Eigen::Vector2i &pt: pts)
             {
                 // 只考虑图像下半部分的车道线像素,因为接近消隐点的地方像素误差过大,不予考虑
-                if (pt[1] > 480)
+                if (pt[1] > 450)
                 {
                     imageGray.at<uchar>(pt[1], pt[0]) = uchar(255);
                 }
+
+                int u = pt[0];
+                int v = pt[1];
+                *(ptr + v*step0 + u*step1 + 0*elemSize1) = 255;
+                *(ptr + v*step0 + u*step1 + 1*elemSize1) = 0;
+                *(ptr + v*step0 + u*step1 + 2*elemSize1) = 0;
             }
         }
 
@@ -99,50 +111,75 @@ int main(int argc, char *argv[])
         for (auto contour : vInitialContours)
         {
             double tmpArea = fabs(cv::contourArea(contour));
-            if (tmpArea > 1600)
+            if (tmpArea < 2500)
             {
-                vContours.push_back(contour);
+                continue;
             }
+
+            int minY = contour[0].y;
+            for (const cv::Point &pt : contour)
+            {
+                if (pt.y < minY)
+                {
+                    minY = pt.y;
+                }
+            }
+
+            if (minY > 451)
+            {
+                continue;
+            }
+
+            vContours.push_back(contour);
         }
 
         // Step4: 对每一个连通域做直线拟合
         std::map<double, std::pair<Eigen::Vector2d, Eigen::Vector2d> > mpairEndPoints;
         for (int i = 0; i < vContours.size(); i++)
         {
-//            if (i != 2)
-//            {
-//                continue;
-//            }
-
             auto contour = vContours[i];
-            // step4.1: 求出直线的斜率与截距
-            double theta = 1;
-            double rho = 0;
-            ceres::Problem problem;
-
-            std::ofstream fout("pts.txt");
+            // step4.0: 逐行扫描，求出每一行的中点
+            int minY = contour[0].y;
+            int maxY = contour[0].y;
             for (const cv::Point &pt : contour)
             {
-                fout << pt.x << " " << pt.y << endl;
-                ceres::CostFunction *pCostFunction = new ceres::AutoDiffCostFunction<
-                        costFunctor, 1, 1, 1>(
-                        new costFunctor(pt.x, pt.y));
-//                problem.AddResidualBlock(pCostFunction, new ceres::CauchyLoss(0.5), &a, &b);
-                problem.AddResidualBlock(pCostFunction, nullptr, &theta, &rho);
+                if (pt.y < minY)
+                {
+                    minY = pt.y;
+                }
+                if (pt.y > maxY)
+                {
+                    maxY = pt.y;
+                }
             }
-            fout.close();
 
-//            problem.SetParameterLowerBound(&rho, 0, 0);
+            std::vector<std::vector<int> > vvMedians;
+            vvMedians.resize(maxY+1);
+            for (const cv::Point &pt : contour)
+            {
+                vvMedians[pt.y].push_back(pt.x);
+            }
 
-            ceres::Solver::Options options;
-            options.linear_solver_type = ceres::DENSE_QR;
-            options.max_num_iterations = 100;
-//            options.minimizer_progress_to_stdout = true;
-            ceres::Solver::Summary summary;
-            ceres::Solve(options, &problem, &summary);
-//            cout << summary.BriefReport() << endl;
-//            cout << "theta = " << theta << endl;
-//            cout << "rho = " << rho << endl;
+//            std::vector<Eigen::Vector2d> vMedians;
+            std::vector<cv::Point> vMedians;
+            vMedians.reserve(maxY - minY + 1);
+
+            for (int j = minY; j < maxY; ++j)
+            {
+                std::vector<int> vXs = vvMedians[j];
+                double median = std::accumulate(vXs.begin(), vXs.end(), 0) / vXs.size();
+//                vMedians.push_back(Eigen::Vector2d(median, j));
+                vMedians.push_back(cv::Point(median, j));
+            }
+
+            cv::Vec4f linePara;
+            cv::fitLine(vMedians, linePara, cv::DIST_L2, 0, 1E-2, 1E-2);
+            double cosTheta = linePara[0];
+            double sinTheta = linePara[1];
+            cv::Point Point0;
+            Point0.x = linePara[2];
+            Point0.y = linePara[3];
+
             // step4.2: 求出这条车道线的上下行边界[rowMin, rowMax]
             std::vector<double> rows;  // 表示一条车道线上的像素经过的所有row
             rows.reserve(contour.size());
@@ -154,12 +191,12 @@ int main(int argc, char *argv[])
             double maxv = *std::max_element(rows.begin(), rows.end());
 
             // 求出车道线的上下两个端点
-            double u1 = (rho - minv * sin(theta)) / cos(theta);    // 车道线上端点对应的u
-            double u2 = (rho - maxv * sin(theta)) / cos(theta);    // 车道线下端点对应的u,容易出现小于0或大于1758等极端情况
+            double u1 = (minv - Point0.y) * cosTheta / sinTheta + Point0.x;    // 车道线上端点对应的u
+            double u2 = (maxv - Point0.y) * cosTheta / sinTheta + Point0.x;    // 车道线下端点对应的u,容易出现小于0或大于1758等极端情况
             Eigen::Vector2d p1(u1, minv);
             Eigen::Vector2d p2(u2, maxv);
 
-            if ((p2 - p1).norm() < 200)
+            if ((p2 - p1).norm() < 250)
             {
                 continue;
             }
@@ -167,7 +204,7 @@ int main(int argc, char *argv[])
             std::pair<Eigen::Vector2d, Eigen::Vector2d> pairEndPoints = std::make_pair(p1, p2);
 
             // step4.3: 求出这条车道线与图像下边界的截距
-            double c = (rho - 800 * sin(theta)) / cos(theta);
+            double c = (800 - Point0.y) * cosTheta / sinTheta + Point0.x;
             mpairEndPoints[c] = pairEndPoints;
         }
 
@@ -215,8 +252,6 @@ int main(int argc, char *argv[])
         {
             for (const cv::Point &pt: vContours[nC++])
             {
-//                cv::circle(image, pt, 1, cv::Scalar(rgb[0], rgb[1], rgb[2]));
-//                cout << pt << endl;
                 cv::circle(image, pt, 1, cv::Scalar(0, 0, 255));
             }
 
@@ -234,7 +269,20 @@ int main(int argc, char *argv[])
         cvPutText(&imMsg, numLane, cvPoint(280,270), &font, cvScalar(0, 0, 255));
 
         cv::imshow("image", image);
-        cv::waitKey(1);
+//        if (nC == 3 || nC == 5)
+//        {
+//            cv::waitKey(1000);
+//        } else
+//        {
+//            cv::waitKey(1);
+//        }
+//
+//        if (nC > 5)
+//        {
+//            cerr << "something is wrong";
+//            abort();
+//        }
+        cv::waitKey(1000);
 
     }
 }
