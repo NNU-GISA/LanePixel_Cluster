@@ -7,6 +7,7 @@
 #include <opencv/cv.hpp>
 #include <ceres/ceres.h>
 #include <glog/logging.h>
+#include <fstream>
 #include "Solver.h"
 
 using std::cout;
@@ -38,7 +39,7 @@ int main(int argc, char *argv[])
         cv::Mat image;
         leftCap >> image;
 
-        if (ni < 1455)
+        if (ni < 500)
             continue;
 
         // Step0.1: Read in pixels judged as lane
@@ -98,7 +99,7 @@ int main(int argc, char *argv[])
         for (auto contour : vInitialContours)
         {
             double tmpArea = fabs(cv::contourArea(contour));
-            if (tmpArea > 2500)
+            if (tmpArea > 1600)
             {
                 vContours.push_back(contour);
             }
@@ -106,28 +107,42 @@ int main(int argc, char *argv[])
 
         // Step4: 对每一个连通域做直线拟合
         std::map<double, std::pair<Eigen::Vector2d, Eigen::Vector2d> > mpairEndPoints;
-        for (auto contour : vContours)
+        for (int i = 0; i < vContours.size(); i++)
         {
+//            if (i != 2)
+//            {
+//                continue;
+//            }
+
+            auto contour = vContours[i];
             // step4.1: 求出直线的斜率与截距
-            double a = 1;
-            double b = 0;
+            double theta = 1;
+            double rho = 0;
             ceres::Problem problem;
 
+            std::ofstream fout("pts.txt");
             for (const cv::Point &pt : contour)
             {
+                fout << pt.x << " " << pt.y << endl;
                 ceres::CostFunction *pCostFunction = new ceres::AutoDiffCostFunction<
                         costFunctor, 1, 1, 1>(
                         new costFunctor(pt.x, pt.y));
 //                problem.AddResidualBlock(pCostFunction, new ceres::CauchyLoss(0.5), &a, &b);
-                problem.AddResidualBlock(pCostFunction, nullptr, &a, &b);
+                problem.AddResidualBlock(pCostFunction, nullptr, &theta, &rho);
             }
+            fout.close();
+
+//            problem.SetParameterLowerBound(&rho, 0, 0);
 
             ceres::Solver::Options options;
             options.linear_solver_type = ceres::DENSE_QR;
             options.max_num_iterations = 100;
+//            options.minimizer_progress_to_stdout = true;
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
-
+//            cout << summary.BriefReport() << endl;
+//            cout << "theta = " << theta << endl;
+//            cout << "rho = " << rho << endl;
             // step4.2: 求出这条车道线的上下行边界[rowMin, rowMax]
             std::vector<double> rows;  // 表示一条车道线上的像素经过的所有row
             rows.reserve(contour.size());
@@ -139,14 +154,20 @@ int main(int argc, char *argv[])
             double maxv = *std::max_element(rows.begin(), rows.end());
 
             // 求出车道线的上下两个端点
-            double u1 = (minv - b) / a;    // 车道线上端点对应的u
-            double u2 = (maxv - b) / a;    // 车道线下端点对应的u,容易出现小于0或大于1758等极端情况
+            double u1 = (rho - minv * sin(theta)) / cos(theta);    // 车道线上端点对应的u
+            double u2 = (rho - maxv * sin(theta)) / cos(theta);    // 车道线下端点对应的u,容易出现小于0或大于1758等极端情况
             Eigen::Vector2d p1(u1, minv);
             Eigen::Vector2d p2(u2, maxv);
+
+            if ((p2 - p1).norm() < 200)
+            {
+                continue;
+            }
+
             std::pair<Eigen::Vector2d, Eigen::Vector2d> pairEndPoints = std::make_pair(p1, p2);
 
             // step4.3: 求出这条车道线与图像下边界的截距
-            double c = (800 - b) / a;
+            double c = (rho - 800 * sin(theta)) / cos(theta);
             mpairEndPoints[c] = pairEndPoints;
         }
 
@@ -213,7 +234,7 @@ int main(int argc, char *argv[])
         cvPutText(&imMsg, numLane, cvPoint(280,270), &font, cvScalar(0, 0, 255));
 
         cv::imshow("image", image);
-        cv::waitKey();
+        cv::waitKey(1);
 
     }
 }

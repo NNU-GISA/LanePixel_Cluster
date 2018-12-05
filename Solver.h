@@ -10,7 +10,8 @@ struct costFunctor {
 
     template <typename T>
     bool operator()(const T* const a, const T* const b, T* residual) const {
-        residual[0] = T(y) - (a[0]*x + b[0]);
+//        residual[0] = T(y) - (a[0]*x + b[0]);
+        residual[0] = b[0] - (ceres::cos(a[0])*x + ceres::sin(a[0])*y);
 
         return true;
     }
