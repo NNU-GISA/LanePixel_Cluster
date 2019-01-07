@@ -39,11 +39,11 @@ int main(int argc, char *argv[])
         cv::Mat image;
         leftCap >> image;
 
-        if (ni < 9220)
+        if (ni < 205)
             continue;
 
         // Step0.1: Read in pixels judged as lane
-        std::string filepath = "/home/lightol/backup/cluster_post/";
+        std::string filepath = "/data/STCC/2018-08-01-16-28-52/cluster_post/";
         std::string filename = filepath + std::to_string(ni) + ".png";
         cv::Mat im = cv::imread(filename, cv::IMREAD_GRAYSCALE);
 
@@ -75,7 +75,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        uchar* ptr = image.data;
+        uchar *ptr = image.data;
         int step0 = image.step[0];
         int step1 = image.step[1];
         int channels = image.channels();
@@ -94,9 +94,9 @@ int main(int argc, char *argv[])
 
                 int u = pt[0];
                 int v = pt[1];
-                *(ptr + v*step0 + u*step1 + 0*elemSize1) = 255;
-                *(ptr + v*step0 + u*step1 + 1*elemSize1) = 0;
-                *(ptr + v*step0 + u*step1 + 2*elemSize1) = 0;
+                *(ptr + v * step0 + u * step1 + 0 * elemSize1) = 255;
+                *(ptr + v * step0 + u * step1 + 1 * elemSize1) = 0;
+                *(ptr + v * step0 + u * step1 + 2 * elemSize1) = 0;
             }
         }
 
@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
             }
 
             std::vector<std::vector<int> > vvMedians;
-            vvMedians.resize(maxY+1);
+            vvMedians.resize(maxY + 1);
             for (const cv::Point &pt : contour)
             {
                 vvMedians[pt.y].push_back(pt.x);
@@ -247,6 +247,19 @@ int main(int argc, char *argv[])
         vRGBs.push_back(Eigen::Vector3i(255, 255, 0));
         vRGBs.push_back(Eigen::Vector3i(255, 0, 255));
         vRGBs.push_back(Eigen::Vector3i(0, 255, 255));
+
+        cv::Mat image2 = image.clone();
+        for (auto iter = mLanes.begin(); iter != mLanes.end(); iter++)
+        {
+            Eigen::Vector3i rgb = vRGBs[iter->first % 6];
+            auto pts = iter->second;
+
+            for (auto pt: pts)
+            {
+                cv::circle(image2, cv::Point(pt[0], pt[1]), 1, cv::Scalar(rgb[0], rgb[1], rgb[2]));
+            }
+        }
+
 //        for (auto contour : vInitialContours)
         for (auto iter = mpairEndPoints.begin(); iter != mpairEndPoints.end(); iter++)
         {
@@ -262,13 +275,21 @@ int main(int argc, char *argv[])
             cv::line(image, cv::Point(p1[0], p1[1]), cv::Point(p2[0], p2[1]), cv::Scalar(rgb[0], rgb[1], rgb[2]), 4);
         }
 
-        CvMat imMsg = image;
-        CvFont font;
-        cvInitFont(&font, CV_FONT_HERSHEY_COMPLEX, 3, 3, 0, 2);
-        const char* numLane = std::to_string(nC).c_str();
-        cvPutText(&imMsg, numLane, cvPoint(280,270), &font, cvScalar(0, 0, 255));
+//        CvMat imMsg = image;
+//        CvFont font;
+//        cvInitFont(&font, CV_FONT_HERSHEY_COMPLEX, 3, 3, 0, 2);
+//        const char* numLane = std::to_string(nC).c_str();
+//        cvPutText(&imMsg, numLane, cvPoint(280,270), &font, cvScalar(0, 0, 255));
+//
+//        CvMat imMsg2 = image2;
+//        CvFont font2;
+//        cvInitFont(&font2, CV_FONT_HERSHEY_COMPLEX, 3, 3, 0, 2);
+//        const char* numLane2 = std::to_string(ni).c_str();
+//        cvPutText(&imMsg2, numLane2, cvPoint(280,270), &font2, cvScalar(0, 0, 255));
 
-        cv::imshow("image", image);
+//        cv::imshow("image", image);
+        cv::imshow("image", image2);
+//        cv::imwrite("image0.png", image2);
 //        if (nC == 3 || nC == 5)
 //        {
 //            cv::waitKey(1000);
@@ -282,7 +303,17 @@ int main(int argc, char *argv[])
 //            cerr << "something is wrong";
 //            abort();
 //        }
-        cv::waitKey(1000);
+        char c = cv::waitKey(3);
+        if (c==112)
+        {
+            cv::waitKey();
+
+        } else
+        {
+            cv::waitKey(100);
+        }
+
+        cv::imwrite("pixel.png", image2);
 
     }
 }
